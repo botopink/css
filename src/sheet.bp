@@ -1,0 +1,480 @@
+//// css/sheet — a stylesheet read into a typed `Sheet`, rendered back, and
+//// scoped (decision 338).
+////
+//// `parse` reads rules, at-rules, comments, strings and `{ }` nesting; every
+//// byte of the text lands in exactly one node, so `render(parse(css))` is
+//// `css` byte for byte. `scope(id, css)` rewrites selectors and nothing
+//// else: declarations, values, comments and at-rule preludes pass through
+//// untouched. A sheet that does not parse is an `Error` naming the byte
+//// offset — never a truncated sheet.
+////
+//// Pure botopink: no host cell, so every target reads and scopes a sheet to
+//// the same bytes.
+
+import {chars.charAt, chars.textOf, chars.byteOffset, chars.problemAt, chars.isSpace, chars.opensComment, chars.skipComment, chars.skipEscape, chars.skipString, chars.isNameChar};
+import {selector.scopeSelector, selector.validScopeId};
+
+// One piece of a sheet. `at` is the byte offset of the node's first byte.
+//
+// - `Space`, `Comment`: the text verbatim (`/* … */` included).
+// - `Declaration`: `prop: value;` verbatim, the `;` included when written
+//   (the last declaration of a block may go without it).
+// - `AtStatement`: a block-less at-rule (`@import …;`, `@layer a, b;`),
+//   verbatim; `name` without the `@`.
+// - `Rule`: `selector` is the raw text up to the `{` (its trailing space
+//   included); `body` holds what the braces enclose.
+// - `AtRule`: `@<name><prelude>{<body>}`; `prelude` is raw.
+// - `Keyframe`: a step of `@keyframes` (`from`, `50%`): a selector that is no
+//   element selector, never scoped.
+pub type Node {
+    Space(text: string),
+    Comment(text: string),
+    Declaration(text: string),
+    AtStatement(name: string, text: string),
+    Rule(selector: string, at: i32, body: Node[]),
+    AtRule(name: string, prelude: string, at: i32, body: Node[]),
+    Keyframe(selector: string, at: i32, body: Node[]),
+}
+
+pub type Sheet(nodes: Node[])
+
+// What a block may hold. `Top`: the sheet itself; `Rules`: a rule-holding
+// at-rule's body at the top (`@media`, `@supports`, `@layer`, `@container`
+// and any at-rule not named below); `Mixed`: a rule's body (declarations and
+// nested rules, CSS nesting); `Declarations`: `@font-face`, `@page` and the
+// other declaration-holding at-rules; `Keyframes`: `@keyframes`'s steps.
+type Context {
+    Top,
+    Rules,
+    Mixed,
+    Declarations,
+    Keyframes,
+}
+
+type Read(nodes: Node[], next: i32, problem: string)
+
+// A prelude read up to its end: `stop` is `{`, `;`, `}` or `""` (the text
+// ended); `end` is the stop's index.
+type Chunk(end: i32, stop: string, problem: string)
+
+fn contextName(c: Context) -> string {
+    return case c {
+        Top -> "top";
+        Rules -> "rules";
+        Mixed -> "mixed";
+        Declarations -> "declarations";
+        Keyframes -> "keyframes";
+    };
+}
+
+// `name` lower-cased with a vendor prefix dropped (`-webkit-keyframes`).
+fn plainName(name: string) -> string {
+    val lower = name.toLower();
+    if (lower.startsWith("-")) {
+        val rest = lower.slice(1);
+        val dash = rest.indexOf("-");
+        if (dash >= 0) return rest.slice(dash + 1);
+    }
+    return lower;
+}
+
+fn holdsDeclarations(name: string) -> bool {
+    val n = plainName(name);
+    return n == "font-face"
+        || n == "page"
+        || n == "property"
+        || n == "counter-style"
+        || n == "font-palette-values"
+        || n == "font-feature-values"
+        || n == "view-transition"
+        || n == "position-try"
+        || n == "top-left-corner"
+        || n == "top-left"
+        || n == "top-center"
+        || n == "top-right"
+        || n == "top-right-corner"
+        || n == "bottom-left-corner"
+        || n == "bottom-left"
+        || n == "bottom-center"
+        || n == "bottom-right"
+        || n == "bottom-right-corner"
+        || n == "left-top"
+        || n == "left-middle"
+        || n == "left-bottom"
+        || n == "right-top"
+        || n == "right-middle"
+        || n == "right-bottom";
+}
+
+// The context of an at-rule's block, read inside `outer`.
+fn innerContext(name: string, outer: Context) -> Context {
+    val o = contextName(outer);
+    if (plainName(name) == "keyframes") return Context.Keyframes;
+    if (holdsDeclarations(name) || o == "declarations")
+        return Context.Declarations;
+    if (o == "mixed") return Context.Mixed;
+    return Context.Rules;
+}
+
+// The at-rule name of a prelude that starts with `@`, without the `@`.
+fn atName(text: string) -> string {
+    val cs = text.chars();
+    var j = 1;
+    while (isNameChar(charAt(cs, j))) {
+        j = j + 1;
+    }
+    return textOf(cs, 1, j);
+}
+
+// Reads from `i` (a character that is neither space nor a comment's start)
+// to the first `{`, `;` or `}` outside strings, comments, `( )` and `[ ]`.
+// A `;` inside parentheses is content (`url(data:…;base64,…)`).
+fn readChunk(cs: string[], i: i32) -> Chunk {
+    var j = i;
+    var opens: i32[] = [];
+    var closers: string[] = [];
+    var stop = "";
+    var end = -1;
+    var problem = "";
+    while (end < 0 && problem == "") {
+        val c = charAt(cs, j);
+        if (j >= cs.length) {
+            if (opens.length > 0) {
+                val o = opens.at(opens.length - 1).unwrapOr(0);
+                problem = problemAt(
+                    "unclosed " + charAt(cs, o),
+                    byteOffset(cs, o),
+                );
+            } else end = j;
+        } else if (c == "\"" || c == "'") {
+            val k = skipString(cs, j);
+            if (k < 0)
+                problem = problemAt("unterminated string", byteOffset(cs, j))
+            else
+                j = k;
+        } else if (opensComment(cs, j)) {
+            val k = skipComment(cs, j);
+            if (k < 0)
+                problem = problemAt("unterminated comment", byteOffset(cs, j))
+            else
+                j = k;
+        } else if (c == "\\") {
+            val k = skipEscape(cs, j);
+            if (k < 0)
+                problem = problemAt("dangling escape", byteOffset(cs, j))
+            else
+                j = k;
+        } else if (c == "(" || c == "[") {
+            opens.push(j);
+            closers.push(if (c == "(") ")" else "]");
+            j = j + 1;
+        } else if (c == ")" || c == "]") {
+            if (closers.length > 0
+                && closers.at(closers.length - 1).unwrapOr("") == c) {
+                opens = opens.slice(0, opens.length - 1);
+                closers = closers.slice(0, closers.length - 1);
+                j = j + 1;
+            } else problem = problemAt("unexpected " + c, byteOffset(cs, j));
+        } else if (c == "{" || c == "}" || (c == ";" && opens.length == 0)) {
+            if (opens.length > 0) {
+                val o = opens.at(opens.length - 1).unwrapOr(0);
+                problem = problemAt(
+                    "unclosed " + charAt(cs, o),
+                    byteOffset(cs, o),
+                );
+            } else {
+                stop = c;
+                end = j;
+            }
+        } else j = j + 1;
+    }
+    return Chunk(end: end, stop: stop, problem: problem);
+}
+
+// Reads a block's content from `i`. `openAt` is the index of the block's
+// `{` (`-1` for the sheet itself, which ends with the text).
+fn readBlock(cs: string[], i0: i32, ctx: Context, openAt: i32) -> Read {
+    val top = contextName(ctx) == "top";
+    val kind = contextName(ctx);
+    var out: Node[] = [];
+    var i = i0;
+    var done = false;
+    var problem = "";
+    while (done == false && problem == "") {
+        val c = charAt(cs, i);
+        if (i >= cs.length) {
+            if (top)
+                done = true
+            else
+                problem = problemAt("unclosed block", byteOffset(cs, openAt));
+        } else if (isSpace(c)) {
+            var j = i;
+            while (isSpace(charAt(cs, j))) {
+                j = j + 1;
+            }
+            out.push(Node.Space(text: textOf(cs, i, j)));
+            i = j;
+        } else if (opensComment(cs, i)) {
+            val j = skipComment(cs, i);
+            if (j < 0)
+                problem = problemAt("unterminated comment", byteOffset(cs, i))
+            else {
+                out.push(Node.Comment(text: textOf(cs, i, j)));
+                i = j;
+            }
+        } else if (c == "}") {
+            if (top)
+                problem = problemAt("unexpected }", byteOffset(cs, i))
+            else {
+                i = i + 1;
+                done = true;
+            }
+        } else {
+            val chunk = readChunk(cs, i);
+            val text = textOf(cs, i, chunk.end);
+            val at = byteOffset(cs, i);
+            val isAt = c == "@";
+            val stop = chunk.stop;
+            if (chunk.problem != "") {
+                problem = chunk.problem;
+                done = true;
+            } else if (stop == "{") {
+                if (isAt) {
+                    val name = atName(text);
+                    val inner = readBlock(
+                        cs,
+                        chunk.end + 1,
+                        innerContext(name, ctx),
+                        chunk.end,
+                    );
+                    if (inner.problem != "") problem = inner.problem else {
+                        out.push(
+                            Node.AtRule(
+                                name: name,
+                                prelude: text.slice(name.length() + 1),
+                                at: at,
+                                body: inner.nodes,
+                            ),
+                        );
+                        i = inner.next;
+                    }
+                } else if (kind == "declarations")
+                    problem = problemAt(
+                        "a rule inside an at-rule that holds declarations",
+                        at,
+                    )
+                else if (text.trim() == "")
+                    problem = problemAt("an empty selector", at)
+                else {
+                    val keyframe = kind == "keyframes";
+                    val innerCtx = if (keyframe)
+                        Context.Declarations
+                    else
+                        Context.Mixed;
+                    val inner = readBlock(
+                        cs,
+                        chunk.end + 1,
+                        innerCtx,
+                        chunk.end,
+                    );
+                    if (inner.problem != "") problem = inner.problem else {
+                        if (keyframe)
+                            out.push(
+                                Node.Keyframe(
+                                    selector: text,
+                                    at: at,
+                                    body: inner.nodes,
+                                ),
+                            )
+                        else
+                            out.push(
+                                Node.Rule(
+                                    selector: text,
+                                    at: at,
+                                    body: inner.nodes,
+                                ),
+                            );
+                        i = inner.next;
+                    }
+                }
+            } else if (stop == ";") {
+                if (isAt) {
+                    out.push(
+                        Node.AtStatement(name: atName(text), text: text + ";"),
+                    );
+                    i = chunk.end + 1;
+                } else if (top || kind == "rules" || kind == "keyframes")
+                    problem = problemAt("a declaration outside a rule", at)
+                else {
+                    out.push(Node.Declaration(text: text + ";"));
+                    i = chunk.end + 1;
+                }
+            } else if (stop == "}") {
+                if (top)
+                    problem = problemAt(
+                        "unexpected }",
+                        byteOffset(cs, chunk.end),
+                    )
+                else if (isAt) {
+                    out.push(Node.AtStatement(name: atName(text), text: text));
+                    i = chunk.end;
+                } else if (kind == "rules" || kind == "keyframes")
+                    problem = problemAt("a declaration outside a rule", at)
+                else {
+                    out.push(Node.Declaration(text: text));
+                    i = chunk.end;
+                }
+            } else if (top)
+                problem = problemAt(
+                    if (isAt)
+                        "an at-rule with no ; or block"
+                    else
+                        "a selector with no block",
+                    at,
+                )
+            else
+                problem = problemAt("unclosed block", byteOffset(cs, openAt));
+        }
+    }
+    return Read(nodes: out, next: i, problem: problem);
+}
+
+// The sheet `css` holds, or an `Error` naming the byte offset where it stops
+// parsing: an unclosed `{`, `(` or `[`, an unexpected `}`, `)` or `]`, an
+// unterminated string or comment, a dangling `\`, a selector with no block,
+// a declaration outside a rule, an empty selector, a rule inside
+// `@font-face`-like at-rules.
+pub fn parse(css: string) -> @Result<Sheet, string> {
+    val r = readBlock(css.chars(), 0, Context.Top, -1);
+    if (r.problem != "") throw r.problem;
+    return Sheet(nodes: r.nodes);
+}
+
+fn renderNode(n: Node) -> string {
+    return case n {
+        Space(text) -> text;
+        Comment(text) -> text;
+        Declaration(text) -> text;
+        AtStatement(name, text) -> text;
+        Rule(selector, at, body) -> selector + "{" + renderNodes(body) + "}";
+        AtRule(name, prelude, at, body) -> "@"
+            + name
+            + prelude
+            + "{"
+            + renderNodes(body)
+            + "}";
+        Keyframe(selector, at, body) -> selector
+            + "{"
+            + renderNodes(body)
+            + "}";
+    };
+}
+
+pub fn renderNodes(nodes: Node[]) -> string {
+    return nodes.map({ n -> renderNode(n) }).join("");
+}
+
+// The text of `sheet`: `render(parse(css))` is `css`.
+pub fn render(sheet: Sheet) -> string {
+    return renderNodes(sheet.nodes);
+}
+
+type ScopedNodes(nodes: Node[], problem: string)
+
+fn scopeNodes(id: string, nodes: Node[]) -> ScopedNodes {
+    var out: Node[] = [];
+    var problem = "";
+    var i = 0;
+    while (i < nodes.length && problem == "") {
+        val n = nodes.at(i).unwrapOr(Node.Space(text: ""));
+        val scoped = scopeNode(id, n);
+        if (scoped.problem != "")
+            problem = scoped.problem
+        else
+            out.push(scoped.nodes.at(0).unwrapOr(n));
+        i = i + 1;
+    }
+    return ScopedNodes(nodes: out, problem: problem);
+}
+
+fn scopeNode(id: string, n: Node) -> ScopedNodes {
+    return case n {
+        Rule(selector, at, body) -> scopeRule(id, selector, at, body);
+        AtRule(name, prelude, at, body) -> scopeAtRule(
+            id,
+            name,
+            prelude,
+            at,
+            body,
+        );
+        Space(text) -> ScopedNodes(nodes: [n], problem: "");
+        Comment(text) -> ScopedNodes(nodes: [n], problem: "");
+        Declaration(text) -> ScopedNodes(nodes: [n], problem: "");
+        AtStatement(name, text) -> ScopedNodes(nodes: [n], problem: "");
+        Keyframe(selector, at, body) -> ScopedNodes(nodes: [n], problem: "");
+    };
+}
+
+fn scopeRule(
+    id: string,
+    selector: string,
+    at: i32,
+    body: Node[],
+) -> ScopedNodes {
+    val sel = scopeSelector(id, selector, at);
+    if (sel.problem != "") return ScopedNodes(nodes: [], problem: sel.problem);
+    val inner = scopeNodes(id, body);
+    if (inner.problem != "") return inner;
+    return ScopedNodes(
+        nodes: [Node.Rule(selector: sel.text, at: at, body: inner.nodes)],
+        problem: "",
+    );
+}
+
+fn scopeAtRule(
+    id: string,
+    name: string,
+    prelude: string,
+    at: i32,
+    body: Node[],
+) -> ScopedNodes {
+    val inner = scopeNodes(id, body);
+    if (inner.problem != "") return inner;
+    return ScopedNodes(
+        nodes: [
+            Node.AtRule(
+                name: name,
+                prelude: prelude,
+                at: at,
+                body: inner.nodes,
+            ),
+        ],
+        problem: "",
+    );
+}
+
+// `sheet` with every element selector scoped to `id` (see `scope`).
+pub fn scopeSheet(id: string, sheet: Sheet) -> @Result<Sheet, string> {
+    if (validScopeId(id) == false)
+        throw "css: the scope id \"" + id + "\" is not [a-z0-9-]+";
+    val r = scopeNodes(id, sheet.nodes);
+    if (r.problem != "") throw r.problem;
+    return Sheet(nodes: r.nodes);
+}
+
+// `css` with `[data-s="<id>"]` appended to each compound of each selector —
+// before a pseudo-element, which must stay last —; a `:global(…)` compound
+// written as its argument, unscoped; the arguments of `:is(…)` and
+// `:where(…)` scoped inside (the compound gets no attribute of its own); a
+// compound holding `&` left alone (its parent is scoped). Keyframe steps,
+// declarations, comments and at-rule preludes pass through byte for byte.
+//
+// An `Error` naming the byte offset for a sheet that does not parse (see
+// `parse`), for a selector that already holds a `[data-s…]` attribute (a
+// sheet is scoped once), for a `:global` that is not a whole compound and
+// for an id outside `[a-z0-9-]+` (it is written into an attribute value).
+pub fn scope(id: string, css: string) -> @Result<string, string> {
+    val parsed = try parse(css);
+    val scoped = try scopeSheet(id, parsed);
+    return render(scoped);
+}

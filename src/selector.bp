@@ -1,0 +1,283 @@
+//// css/selector — one selector list scoped to an id (decision 338).
+////
+//// A selector list is compounds and separators: whitespace, the combinators
+//// `>`, `+`, `~` and the list's `,`. Each compound gets `[data-s="<id>"]` —
+//// before its first pseudo-element (`::before`, and the legacy one-colon
+//// `:before`, `:after`, `:first-line`, `:first-letter`), which must stay
+//// last; otherwise at its end. Then, by the compound's shape:
+////
+//// - `:global(sel)`, the whole compound: written as `sel`, unscoped. A
+////   `:global` that is not a whole compound (`.a:global(.b)`), one with no
+////   argument and one inside another pseudo-class's argument are refused.
+//// - a compound with `:is(…)` or `:where(…)`: each argument is a selector
+////   list scoped inside, and the compound gets no attribute of its own (the
+////   element is the argument's; `:where`'s zero specificity is kept).
+//// - a compound holding `&` (CSS nesting): left alone; its parent is scoped.
+//// - a compound of comments only: a separator.
+////
+//// A selector that already holds a `[data-s…]` attribute is refused: a
+//// sheet is scoped once.
+
+import {chars.charAt, chars.textOf, chars.byteOffset, chars.problemAt, chars.isSpace, chars.opensComment, chars.skipComment, chars.skipEscape, chars.skipString, chars.isNameChar};
+
+pub type ScopedText(text: string, problem: string)
+
+// `[a-z0-9-]+`: the id is written inside an attribute value.
+pub fn validScopeId(id: string) -> bool {
+    if (id == "") return false;
+    var ok = true;
+    for (id.chars()) { c ->
+        if ("abcdefghijklmnopqrstuvwxyz0123456789-".contains(c) == false)
+            ok = false;
+    }
+    return ok;
+}
+
+fn isSeparator(c: string) -> bool {
+    return isSpace(c) || c == ">" || c == "+" || c == "~" || c == ",";
+}
+
+fn isLegacyPseudoElement(name: string) -> bool {
+    return name == "before"
+        || name == "after"
+        || name == "first-line"
+        || name == "first-letter";
+}
+
+// Past the `)` or `]` that closes the group opening at `j`; the end of the
+// text when it is not closed (the reader refuses that sheet first).
+fn skipGroup(cs: string[], j0: i32) -> i32 {
+    var j = j0 + 1;
+    var depth = 1;
+    while (depth > 0 && j < cs.length) {
+        val c = charAt(cs, j);
+        if (c == "\"" || c == "'") {
+            val k = skipString(cs, j);
+            j = if (k < 0) cs.length else k;
+        } else if (opensComment(cs, j)) {
+            val k = skipComment(cs, j);
+            j = if (k < 0) cs.length else k;
+        } else if (c == "\\") {
+            val k = skipEscape(cs, j);
+            j = if (k < 0) cs.length else k;
+        } else {
+            if (c == "(" || c == "[") depth = depth + 1;
+            if (c == ")" || c == "]") depth = depth - 1;
+            j = j + 1;
+        }
+    }
+    return j;
+}
+
+// The index of the first `[data-s…]` attribute selector, `-1` when there is
+// none. Strings and comments are skipped; the name is compared without case.
+fn scopedAttributeAt(cs: string[]) -> i32 {
+    var j = 0;
+    var found = -1;
+    while (found < 0 && j < cs.length) {
+        val c = charAt(cs, j);
+        if (c == "\"" || c == "'") {
+            val k = skipString(cs, j);
+            j = if (k < 0) cs.length else k;
+        } else if (opensComment(cs, j)) {
+            val k = skipComment(cs, j);
+            j = if (k < 0) cs.length else k;
+        } else if (c == "\\") {
+            val k = skipEscape(cs, j);
+            j = if (k < 0) cs.length else k;
+        } else if (c == "[") {
+            var k = j + 1;
+            while (isSpace(charAt(cs, k))) {
+                k = k + 1;
+            }
+            val nameStart = k;
+            while (isNameChar(charAt(cs, k))) {
+                k = k + 1;
+            }
+            if (textOf(cs, nameStart, k).toLower() == "data-s") found = j;
+            j = j + 1;
+        } else j = j + 1;
+    }
+    return found;
+}
+
+// `[data-s="<id>"]`.
+fn attribute(id: string) -> string {
+    return "[data-s=\"" + id + "\"]";
+}
+
+// The compound `cs[b..e)` scoped; `at` is the byte offset of `cs[0]`.
+fn scopeCompound(
+    id: string,
+    cs: string[],
+    b: i32,
+    e: i32,
+    at: i32,
+) -> ScopedText {
+    var j = b;
+    var problem = "";
+    var hasContent = false;
+    var hasAmp = false;
+    var insertAt = -1;
+    var globalAt = -1;
+    var globalArgStart = -1;
+    var globalEnd = -1;
+    var argStarts: i32[] = [];
+    var argEnds: i32[] = [];
+    while (j < e && problem == "") {
+        val c = charAt(cs, j);
+        if (c == "\"" || c == "'") {
+            hasContent = true;
+            j = skipString(cs, j);
+        } else if (opensComment(cs, j)) {
+            val k = skipComment(cs, j);
+            j = if (k < 0) e else k;
+        } else if (c == "\\") {
+            hasContent = true;
+            j = skipEscape(cs, j);
+        } else if (c == "[" || c == "(") {
+            hasContent = true;
+            j = skipGroup(cs, j);
+        } else if (c == "&") {
+            hasContent = true;
+            hasAmp = true;
+            j = j + 1;
+        } else if (c == ":") {
+            hasContent = true;
+            val element = charAt(cs, j + 1) == ":";
+            val nameStart = if (element) j + 2 else j + 1;
+            var k = nameStart;
+            while (isNameChar(charAt(cs, k))) {
+                k = k + 1;
+            }
+            val name = textOf(cs, nameStart, k).toLower();
+            val isFn = charAt(cs, k) == "(";
+            val groupEnd = if (isFn) skipGroup(cs, k) else k;
+            if (insertAt < 0 && (element || isLegacyPseudoElement(name)))
+                insertAt = j;
+            if (element == false && name == "global") {
+                if (isFn == false)
+                    problem = problemAt(
+                        "`:global` takes a selector, `:global(...)`",
+                        at + byteOffset(cs, j),
+                    )
+                else if (globalAt >= 0)
+                    problem = problemAt(
+                        "`:global(...)` must be a whole compound",
+                        at + byteOffset(cs, j),
+                    )
+                else {
+                    globalAt = j;
+                    globalArgStart = k + 1;
+                    globalEnd = groupEnd;
+                }
+            } else if (element == false
+                && isFn
+                && (name == "is" || name == "where")) {
+                argStarts.push(k + 1);
+                argEnds.push(groupEnd - 1);
+            } else if (isFn
+                && textOf(cs, k, groupEnd).toLower().contains(":global"))
+                problem = problemAt(
+                    "`:global(...)` must be a whole compound",
+                    at + byteOffset(cs, j),
+                );
+            j = groupEnd;
+        } else {
+            hasContent = true;
+            j = j + 1;
+        }
+    }
+    val raw = textOf(cs, b, e);
+    if (problem != "") return ScopedText(text: "", problem: problem);
+    if (hasContent == false) return ScopedText(text: raw, problem: "");
+    if (globalAt >= 0) {
+        if (globalAt != b || globalEnd != e)
+            return ScopedText(
+                text: "",
+                problem: problemAt(
+                    "`:global(...)` must be a whole compound",
+                    at + byteOffset(cs, globalAt),
+                ),
+            );
+        return ScopedText(
+            text: textOf(cs, globalArgStart, globalEnd - 1),
+            problem: "",
+        );
+    }
+    if (hasAmp) return ScopedText(text: raw, problem: "");
+    if (argStarts.length > 0) {
+        var out = "";
+        var cur = b;
+        var i = 0;
+        while (i < argStarts.length && problem == "") {
+            val s = argStarts.at(i).unwrapOr(b);
+            val f = argEnds.at(i).unwrapOr(b);
+            val inner = scopeList(id, textOf(cs, s, f), at + byteOffset(cs, s));
+            if (inner.problem != "")
+                problem = inner.problem
+            else
+                out = out + textOf(cs, cur, s) + inner.text;
+            cur = f;
+            i = i + 1;
+        }
+        if (problem != "") return ScopedText(text: "", problem: problem);
+        return ScopedText(text: out + textOf(cs, cur, e), problem: "");
+    }
+    val cut = if (insertAt < 0) e else insertAt;
+    return ScopedText(
+        text: textOf(cs, b, cut) + attribute(id) + textOf(cs, cut, e),
+        problem: "",
+    );
+}
+
+// The selector list `selector` scoped; `at` is its byte offset in the sheet.
+fn scopeList(id: string, selector: string, at: i32) -> ScopedText {
+    val cs = selector.chars();
+    var out = "";
+    var problem = "";
+    var start = 0;
+    var j = 0;
+    while (j <= cs.length && problem == "") {
+        val c = charAt(cs, j);
+        if (j == cs.length || isSeparator(c)) {
+            val compound = scopeCompound(id, cs, start, j, at);
+            if (compound.problem != "") problem = compound.problem else {
+                var k = j;
+                while (k < cs.length && isSeparator(charAt(cs, k))) {
+                    k = k + 1;
+                }
+                out = out + compound.text + textOf(cs, j, k);
+                start = k;
+                j = if (k == j) k + 1 else k;
+            }
+        } else if (c == "\"" || c == "'") {
+            val k = skipString(cs, j);
+            j = if (k < 0) cs.length else k;
+        } else if (opensComment(cs, j)) {
+            val k = skipComment(cs, j);
+            j = if (k < 0) cs.length else k;
+        } else if (c == "\\") {
+            val k = skipEscape(cs, j);
+            j = if (k < 0) cs.length else k;
+        } else if (c == "(" || c == "[") j = skipGroup(cs, j) else j = j + 1;
+    }
+    return ScopedText(text: out, problem: problem);
+}
+
+// The selector list `selector` (a rule's raw prelude, its trailing space
+// included) scoped to `id`; `at` is its byte offset in the sheet, so a
+// refusal names the sheet's offset.
+pub fn scopeSelector(id: string, selector: string, at: i32) -> ScopedText {
+    val cs = selector.chars();
+    val already = scopedAttributeAt(cs);
+    if (already >= 0)
+        return ScopedText(
+            text: "",
+            problem: problemAt(
+                "a selector already scoped with `[data-s]`",
+                at + byteOffset(cs, already),
+            ),
+        );
+    return scopeList(id, selector, at);
+}

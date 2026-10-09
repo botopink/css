@@ -1,0 +1,16 @@
+{
+  "name": "css",
+  "version": "0.0.1",
+  "otp": "28",
+  "description": "The base for building CSS: a stylesheet read into a typed Sheet, its renderer, and scope(id, css) — pure .bp, erlang and commonJS",
+  "src": "src/",
+  "entry": "root.bp",
+  "target": "erlang",
+  "targets": ["erlang", "commonJS"],
+  "files": [
+    "root.bp",
+    "chars.bp",
+    "selector.bp",
+    "sheet.bp"
+  ]
+}

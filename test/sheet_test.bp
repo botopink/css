@@ -1,0 +1,144 @@
+//// css: the reader and the renderer — a sheet reads into typed nodes, and
+//// `render(parse(css))` is `css` byte for byte, on both targets.
+
+import {testing.asserts} from "std";
+import {sheet.Node, sheet.Sheet, sheet.parse, sheet.render};
+
+fn roundTrip(css: string) -> string {
+    val r = parse(css);
+    val text = case r {
+        Ok(s) -> render(s);
+        Error(e) -> "ERROR " + e;
+    };
+    return text;
+}
+
+fn empty() -> Sheet {
+    return Sheet(nodes: []);
+}
+
+// One letter per node, nested blocks in parentheses: `S` space, `C` comment,
+// `D` declaration (the last one of a block may run to the `}`, its space
+// included), `T` at-statement, `R` rule, `A` at-rule, `K` keyframe.
+fn shapeOf(nodes: Array<Node>) -> string {
+    return nodes.map({ n -> shapeOfNode(n) }).join("");
+}
+
+fn shapeOfNode(n: Node) -> string {
+    return case n {
+        Space(text) -> "S";
+        Comment(text) -> "C";
+        Declaration(text) -> "D";
+        AtStatement(name, text) -> "T";
+        Rule(selector, at, body) -> "R(" + shapeOf(body) + ")";
+        AtRule(name, prelude, at, body) -> "A(" + shapeOf(body) + ")";
+        Keyframe(selector, at, body) -> "K(" + shapeOf(body) + ")";
+    };
+}
+
+fn shape(css: string) -> string {
+    return shapeOf(parse(css).unwrapOr(empty()).nodes);
+}
+
+fn firstNode(css: string) -> Node {
+    return parse(css).unwrapOr(empty()).nodes
+        .at(0)
+        .unwrapOr(Node.Space(text: "<none>"));
+}
+
+test "css: a sheet reads into typed nodes" {
+    try asserts.equals(shape("h1 { color: red; }"), "R(SDS)");
+    try asserts.equals(shape("/* a */\nh1{a:b;c:d}"), "CSR(DD)");
+    try asserts.equals(
+        shape("@import url(\"x.css\") screen;\n.a { }"),
+        "TSR(S)",
+    );
+    try asserts.equals(shape("@media print { .a { b: c } }"), "A(SR(SD)S)");
+    try asserts.equals(
+        shape(".a { b: c; &:hover { d: e; } .f { } }"),
+        "R(SDSR(SDS)SR(S)S)",
+    );
+    try asserts.equals(
+        shape("@keyframes k { from { a: b } to { a: c } }"),
+        "A(SK(SD)SK(SD)S)",
+    );
+    try asserts.equals(
+        shape("@font-face { font-family: x; src: url(a.woff2) }"),
+        "A(SDSD)",
+    );
+    try asserts.equals(
+        shape("@page :first { margin: 1in; @top-left { content: \"x\" } }"),
+        "A(SDSA(SD)S)",
+    );
+    try asserts.equals(shape("@layer a, b;"), "T");
+}
+
+test "css: a rule keeps its raw selector and its byte offset" {
+    val n = firstNode("h1 , h2 { }");
+    val seen = case n {
+        Rule(selector, at, body) -> selector + "|" + at.toString();
+        Space(text) -> "space";
+        Comment(text) -> "comment";
+        Declaration(text) -> "declaration";
+        AtStatement(name, text) -> "statement";
+        AtRule(name, prelude, at, body) -> "at-rule";
+        Keyframe(selector, at, body) -> "keyframe";
+    };
+    try asserts.equals(seen, "h1 , h2 |0");
+    val m = firstNode("@media (min-width: 40em) { }");
+    val atRule = case m {
+        AtRule(name, prelude, at, body) -> name + "|" + prelude;
+        Rule(selector, at, body) -> "rule";
+        Space(text) -> "space";
+        Comment(text) -> "comment";
+        Declaration(text) -> "declaration";
+        AtStatement(name, text) -> "statement";
+        Keyframe(selector, at, body) -> "keyframe";
+    };
+    try asserts.equals(atRule, "media| (min-width: 40em) ");
+}
+
+test "css: render(parse(css)) is css, byte for byte" {
+    val corpus = [
+        "",
+        "   \n\t",
+        "h1 { color: red; }",
+        "h1{color:red}",
+        "/* only a comment */",
+        "@charset \"UTF-8\";\n@import url(\"a;b.css\") screen and (min-width: 1px);\n",
+        ".a { background: url(data:image/png;base64,iVBOR=) no-repeat; }",
+        ".a::before { content: \"}\\\"{\"; } /* } */ .b { color: red }",
+        ".a { content: 'it\\'s' }",
+        "@media screen { @supports (display: grid) { .g { display: grid } } }",
+        ".card { color: red; &:hover { color: blue; } @media (width > 40em) { padding: 0 } }",
+        "@-webkit-keyframes spin { 0% { transform: rotate(0) } 100% { transform: rotate(1turn) } }",
+        "@font-face { font-family: \"Inter\"; src: url(inter.woff2) format(\"woff2\"); }",
+        "@layer reset, base;\n@layer base { html { color: black } }",
+        "@container sidebar (min-width: 400px) { .card { display: grid } }",
+        ".\\31 0 { } .a\\:b { }",
+        "h1 { content: \"é → 🎉\"; }\r\n",
+        ":root { --x: 1px; --empty:; }",
+        "a[title=\"a { b\"] { }",
+    ];
+    var wrong = "";
+    for (corpus) { css ->
+        val got = roundTrip(css);
+        if (got != css) wrong = wrong + "\n" + css + "\n  got " + got;
+    }
+    try asserts.equals(wrong, "");
+}
+
+test "css: a sheet that does not parse renders nothing" {
+    try asserts.equals(
+        roundTrip(".a { color: red;"),
+        "ERROR css: unclosed block at byte 3",
+    );
+    try asserts.equals(
+        roundTrip(".a { color: red; } }"),
+        "ERROR css: unexpected } at byte 19",
+    );
+    try asserts.equals(
+        roundTrip(".a { content: \"x }"),
+        "ERROR css: unterminated string at byte 14",
+    );
+}

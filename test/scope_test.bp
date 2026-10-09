@@ -1,0 +1,332 @@
+//// css: `scope` — forty selector cases, each a literal pair (written,
+//// served), on both targets; one digest of the forty outputs, the same
+//// literal on both; the refusals with their byte offsets.
+
+import {testing.asserts} from "std";
+import {hash.strongHash} from "std";
+import {sheet.scope};
+
+type Case(written: string, served: string)
+
+fn outcome(id: string, css: string) -> string {
+    val r = scope(id, css);
+    val text = case r {
+        Ok(s) -> s;
+        Error(e) -> "ERROR " + e;
+    };
+    return text;
+}
+
+fn scoped(css: string) -> string {
+    return outcome("a1", css);
+}
+
+fn cases() -> Array<Case> {
+    return [
+        // the reference's two (astro-docs/11-styling.md, Estilos com Escopo)
+        Case(
+            written: "h1 { color: red; }",
+            served: "h1[data-s=\"a1\"] { color: red; }",
+        ),
+        Case(
+            written: ".text { color: blue; }",
+            served: ".text[data-s=\"a1\"] { color: blue; }",
+        ),
+        // simple selectors
+        Case(
+            written: "#main { margin: 0; }",
+            served: "#main[data-s=\"a1\"] { margin: 0; }",
+        ),
+        Case(
+            written: "* { box-sizing: border-box; }",
+            served: "*[data-s=\"a1\"] { box-sizing: border-box; }",
+        ),
+        Case(
+            written: "div.card#x { }",
+            served: "div.card#x[data-s=\"a1\"] { }",
+        ),
+        // combinators and lists
+        Case(
+            written: "article p { }",
+            served: "article[data-s=\"a1\"] p[data-s=\"a1\"] { }",
+        ),
+        Case(
+            written: "ul > li { }",
+            served: "ul[data-s=\"a1\"] > li[data-s=\"a1\"] { }",
+        ),
+        Case(
+            written: "h1 + p { }",
+            served: "h1[data-s=\"a1\"] + p[data-s=\"a1\"] { }",
+        ),
+        Case(
+            written: "h1 ~ p { }",
+            served: "h1[data-s=\"a1\"] ~ p[data-s=\"a1\"] { }",
+        ),
+        Case(
+            written: "ul>li+li~li{}",
+            served: "ul[data-s=\"a1\"]>li[data-s=\"a1\"]+li[data-s=\"a1\"]~li[data-s=\"a1\"]{}",
+        ),
+        Case(
+            written: "h1, h2,\nh3 { }",
+            served: "h1[data-s=\"a1\"], h2[data-s=\"a1\"],\nh3[data-s=\"a1\"] { }",
+        ),
+        // pseudo-classes and pseudo-elements
+        Case(written: "a:hover { }", served: "a:hover[data-s=\"a1\"] { }"),
+        Case(
+            written: "a:hover::after { }",
+            served: "a:hover[data-s=\"a1\"]::after { }",
+        ),
+        Case(
+            written: "p::first-line { }",
+            served: "p[data-s=\"a1\"]::first-line { }",
+        ),
+        Case(written: "p:before { }", served: "p[data-s=\"a1\"]:before { }"),
+        Case(
+            written: "::selection { }",
+            served: "[data-s=\"a1\"]::selection { }",
+        ),
+        // attribute selectors: the attribute goes after them
+        Case(
+            written: "input[type=\"text\"] { }",
+            served: "input[type=\"text\"][data-s=\"a1\"] { }",
+        ),
+        Case(
+            written: "a[href$=\".pdf\" i] { }",
+            served: "a[href$=\".pdf\" i][data-s=\"a1\"] { }",
+        ),
+        // a function's argument is not a combinator
+        Case(
+            written: "li:nth-child(2n + 1) { }",
+            served: "li:nth-child(2n + 1)[data-s=\"a1\"] { }",
+        ),
+        Case(
+            written: "p:not(.intro, .lead) { }",
+            served: "p:not(.intro, .lead)[data-s=\"a1\"] { }",
+        ),
+        // :is and :where: scoped inside
+        Case(
+            written: ":is(h1, h2) span { }",
+            served: ":is(h1[data-s=\"a1\"], h2[data-s=\"a1\"]) span[data-s=\"a1\"] { }",
+        ),
+        Case(
+            written: ":where(.a .b) { }",
+            served: ":where(.a[data-s=\"a1\"] .b[data-s=\"a1\"]) { }",
+        ),
+        Case(
+            written: ".card:has(> img) { }",
+            served: ".card:has(> img)[data-s=\"a1\"] { }",
+        ),
+        // :global
+        Case(
+            written: ":global(h1) { margin: 0; }",
+            served: "h1 { margin: 0; }",
+        ),
+        Case(
+            written: ".text :global(em) { }",
+            served: ".text[data-s=\"a1\"] em { }",
+        ),
+        Case(
+            written: ":global(.dark) .btn { }",
+            served: ".dark .btn[data-s=\"a1\"] { }",
+        ),
+        Case(
+            written: ":global(.a .b) > p { }",
+            served: ".a .b > p[data-s=\"a1\"] { }",
+        ),
+        Case(
+            written: ":is(:global(body), main) p { }",
+            served: ":is(body, main[data-s=\"a1\"]) p[data-s=\"a1\"] { }",
+        ),
+        // escapes: an escaped `:` is a name character; `\31 ` ends at its space
+        Case(
+            written: ".a\\:hover { }",
+            served: ".a\\:hover[data-s=\"a1\"] { }",
+        ),
+        Case(written: ".\\31 0 { }", served: ".\\31 0[data-s=\"a1\"] { }"),
+        // nesting
+        Case(
+            written: ".card { color: red; &:hover { color: blue; } }",
+            served: ".card[data-s=\"a1\"] { color: red; &:hover { color: blue; } }",
+        ),
+        Case(
+            written: ".card { .title { font-size: 2rem } }",
+            served: ".card[data-s=\"a1\"] { .title[data-s=\"a1\"] { font-size: 2rem } }",
+        ),
+        Case(
+            written: ".card { @media (width > 40em) { padding: 0; } }",
+            served: ".card[data-s=\"a1\"] { @media (width > 40em) { padding: 0; } }",
+        ),
+        // rule-holding at-rules: the prelude untouched, the rules scoped
+        Case(
+            written: "@media screen and (min-width: 40em) { .a, .b { } }",
+            served: "@media screen and (min-width: 40em) { .a[data-s=\"a1\"], .b[data-s=\"a1\"] { } }",
+        ),
+        Case(
+            written: "@supports (display: grid) { .grid { display: grid; } }",
+            served: "@supports (display: grid) { .grid[data-s=\"a1\"] { display: grid; } }",
+        ),
+        Case(
+            written: "@layer base { h1 { } } @layer a, b;",
+            served: "@layer base { h1[data-s=\"a1\"] { } } @layer a, b;",
+        ),
+        Case(
+            written: "@container card (min-width: 20em) { .t { } }",
+            served: "@container card (min-width: 20em) { .t[data-s=\"a1\"] { } }",
+        ),
+        // the others: nothing is a selector
+        Case(
+            written: "@keyframes pulse { 0% { opacity: 0; } 50.5% { opacity: .5; } to { opacity: 1; } }",
+            served: "@keyframes pulse { 0% { opacity: 0; } 50.5% { opacity: .5; } to { opacity: 1; } }",
+        ),
+        Case(
+            written: "@font-face { font-family: \"X{\"; src: url(x.woff2); }",
+            served: "@font-face { font-family: \"X{\"; src: url(x.woff2); }",
+        ),
+        // comments and strings are not structure
+        Case(
+            written: "/* h1 { } */ h1 /* c */ { content: \"→ { b }\"; }",
+            served: "/* h1 { } */ h1[data-s=\"a1\"] /* c */ { content: \"→ { b }\"; }",
+        ),
+    ];
+}
+
+test "css: forty selector cases, each served as its literal" {
+    val all = cases();
+    var wrong = "";
+    for (all) { c ->
+        val got = scoped(c.written);
+        if (got != c.served)
+            wrong = wrong
+                + "\n"
+                + c.written
+                + "\n  got  "
+                + got
+                + "\n  want "
+                + c.served;
+    }
+    try asserts.equals(all.length, 40);
+    try asserts.equals(wrong, "");
+}
+
+// The first 32 hex digits of SHA-256 over the forty served literals joined by
+// a line feed — the same text the forty outputs join to, so one value pins all
+// forty on both targets (checked once outside botopink against the literals).
+test "css: one digest of the forty outputs, the same on every target" {
+    val outputs = cases().map({ c -> scoped(c.written) });
+    try asserts.equals(
+        strongHash(outputs.join("\n")),
+        "927d3299cc7b6d291a5fc86c645e31e5",
+    );
+}
+
+// ── refusals: the byte offset of the first byte that does not parse ─────────
+
+test "css: an unclosed block names its brace" {
+    try asserts.equals(
+        scoped(".a { color: red;"),
+        "ERROR css: unclosed block at byte 3",
+    );
+    try asserts.equals(
+        scoped("@media print { .a { }"),
+        "ERROR css: unclosed block at byte 13",
+    );
+}
+
+test "css: an unterminated string names its quote" {
+    try asserts.equals(
+        scoped(".a::before { content: \"oops; }"),
+        "ERROR css: unterminated string at byte 22",
+    );
+    // `→` is three bytes: the offset counts bytes, not characters
+    try asserts.equals(
+        scoped("→ { color: \"x"),
+        "ERROR css: unterminated string at byte 13",
+    );
+    try asserts.equals(
+        scoped(".a { content: \"x\ny\"; }"),
+        "ERROR css: unterminated string at byte 14",
+    );
+}
+
+test "css: an unterminated comment, a stray brace, an unclosed parenthesis" {
+    try asserts.equals(
+        scoped("h1 { } /* x"),
+        "ERROR css: unterminated comment at byte 7",
+    );
+    try asserts.equals(scoped("é { }}"), "ERROR css: unexpected } at byte 6");
+    try asserts.equals(
+        scoped("@media (x { }"),
+        "ERROR css: unclosed ( at byte 7",
+    );
+    try asserts.equals(scoped("a[href { }"), "ERROR css: unclosed [ at byte 1");
+    try asserts.equals(scoped("a) { }"), "ERROR css: unexpected ) at byte 1");
+}
+
+test "css: text that is no rule is refused, never dropped" {
+    try asserts.equals(
+        scoped("h1 { } h2"),
+        "ERROR css: a selector with no block at byte 7",
+    );
+    try asserts.equals(
+        scoped("color: red;"),
+        "ERROR css: a declaration outside a rule at byte 0",
+    );
+    try asserts.equals(
+        scoped("{ color: red; }"),
+        "ERROR css: an empty selector at byte 0",
+    );
+    try asserts.equals(
+        scoped("@font-face { h1 { } }"),
+        "ERROR css: a rule inside an at-rule that holds declarations at byte 13",
+    );
+    try asserts.equals(
+        scoped("@media print { color: red; }"),
+        "ERROR css: a declaration outside a rule at byte 15",
+    );
+    try asserts.equals(
+        scoped("h1 { } \\"),
+        "ERROR css: dangling escape at byte 7",
+    );
+}
+
+test "css: scoping twice is refused, naming the attribute" {
+    val once = scoped("h1 { color: red; }");
+    try asserts.equals(
+        scoped(once),
+        "ERROR css: a selector already scoped with `[data-s]` at byte 2",
+    );
+    try asserts.equals(
+        outcome("b2", "p:not([data-s]) { }"),
+        "ERROR css: a selector already scoped with `[data-s]` at byte 6",
+    );
+}
+
+test "css: a :global that is not a whole compound is refused" {
+    try asserts.equals(
+        scoped(".a:global(.b) { }"),
+        "ERROR css: `:global(...)` must be a whole compound at byte 2",
+    );
+    try asserts.equals(
+        scoped("p:not(:global(.b)) { }"),
+        "ERROR css: `:global(...)` must be a whole compound at byte 1",
+    );
+    try asserts.equals(
+        scoped("h1 { } :global { }"),
+        "ERROR css: `:global` takes a selector, `:global(...)` at byte 7",
+    );
+}
+
+test "css: a scope id outside [a-z0-9-]+ is refused, naming it" {
+    try asserts.equals(
+        outcome("A1", "h1 { }"),
+        "ERROR css: the scope id \"A1\" is not [a-z0-9-]+",
+    );
+    try asserts.equals(
+        outcome("", "h1 { }"),
+        "ERROR css: the scope id \"\" is not [a-z0-9-]+",
+    );
+    try asserts.equals(
+        outcome("components-post-card-12", "h1 { }"),
+        "h1[data-s=\"components-post-card-12\"] { }",
+    );
+}
