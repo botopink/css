@@ -140,7 +140,7 @@ fn readChunk(cs: string[], i: i32) -> Chunk {
         val c = charAt(cs, j);
         if (j >= cs.length) {
             if (opens.length > 0) {
-                val o = opens.at(opens.length - 1).unwrapOr(0);
+                val o = opens.at(opens.length - 1) ?? 0;
                 problem = problemAt(
                     "unclosed " + charAt(cs, o),
                     byteOffset(cs, o),
@@ -170,14 +170,14 @@ fn readChunk(cs: string[], i: i32) -> Chunk {
             j = j + 1;
         } else if (c == ")" || c == "]") {
             if (closers.length > 0
-                && closers.at(closers.length - 1).unwrapOr("") == c) {
+                && (closers.at(closers.length - 1) ?? "") == c) {
                 opens = opens.slice(0, opens.length - 1);
                 closers = closers.slice(0, closers.length - 1);
                 j = j + 1;
             } else problem = problemAt("unexpected " + c, byteOffset(cs, j));
         } else if (c == "{" || c == "}" || (c == ";" && opens.length == 0)) {
             if (opens.length > 0) {
-                val o = opens.at(opens.length - 1).unwrapOr(0);
+                val o = opens.at(opens.length - 1) ?? 0;
                 problem = problemAt(
                     "unclosed " + charAt(cs, o),
                     byteOffset(cs, o),
@@ -386,12 +386,12 @@ fn scopeNodes(id: string, nodes: Node[]) -> ScopedNodes {
     var problem = "";
     var i = 0;
     while (i < nodes.length && problem == "") {
-        val n = nodes.at(i).unwrapOr(Node.Space(text: ""));
+        val n = nodes.at(i) ?? Node.Space(text: "");
         val scoped = scopeNode(id, n);
         if (scoped.problem != "")
             problem = scoped.problem
         else
-            out.push(scoped.nodes.at(0).unwrapOr(n));
+            out.push(scoped.nodes.at(0) ?? n);
         i = i + 1;
     }
     return ScopedNodes(nodes: out, problem: problem);

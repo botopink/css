@@ -41,9 +41,9 @@ fn shape(css: string) -> string {
 }
 
 fn firstNode(css: string) -> Node {
-    return parse(css).unwrapOr(empty()).nodes
-        .at(0)
-        .unwrapOr(Node.Space(text: "<none>"));
+    return parse(css).unwrapOr(empty()).nodes.at(0) ?? Node.Space(
+        text: "<none>",
+    );
 }
 
 test "css: a sheet reads into typed nodes" {

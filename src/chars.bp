@@ -9,7 +9,7 @@
 // `Array.at` would count it from the end).
 pub fn charAt(cs: string[], i: i32) -> string {
     if (i < 0) return "";
-    return cs.at(i).unwrapOr("");
+    return cs.at(i) ?? "";
 }
 
 // The text of `cs[begin..end)`.

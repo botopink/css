@@ -211,8 +211,8 @@ fn scopeCompound(
         var cur = b;
         var i = 0;
         while (i < argStarts.length && problem == "") {
-            val s = argStarts.at(i).unwrapOr(b);
-            val f = argEnds.at(i).unwrapOr(b);
+            val s = argStarts.at(i) ?? b;
+            val f = argEnds.at(i) ?? b;
             val inner = scopeList(id, textOf(cs, s, f), at + byteOffset(cs, s));
             if (inner.problem != "")
                 problem = inner.problem
