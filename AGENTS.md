@@ -1,5 +1,7 @@
 # css
 
+`decisions-taken.md` is generated — from the meta repository's `specs/<milestone>/decisions-taken.md` by `scripts/decisions-split.py`; edit it there, never here.
+
 > Repository: `botopink/css` (`git@github.com:botopink/css.git`) · in the meta checkout: `repository/css/`
 
 The `css` library (decision 338): the base for building CSS. A reader of a stylesheet —
