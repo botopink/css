@@ -344,7 +344,7 @@ fn readBlock(cs: string[], i0: i32, ctx: Context, openAt: i32) -> Read {
 // unterminated string or comment, a dangling `\`, a selector with no block,
 // a declaration outside a rule, an empty selector, a rule inside
 // `@font-face`-like at-rules.
-pub fn parse(css: string) -> @Result<Sheet, string> {
+pub fn parse(css: string) -> Result<Sheet, string> {
     val r = readBlock(css.chars(), 0, Context.Top, -1);
     if (r.problem != "") throw r.problem;
     return Sheet(nodes: r.nodes);
@@ -454,7 +454,7 @@ fn scopeAtRule(
 }
 
 // `sheet` with every element selector scoped to `id` (see `scope`).
-pub fn scopeSheet(id: string, sheet: Sheet) -> @Result<Sheet, string> {
+pub fn scopeSheet(id: string, sheet: Sheet) -> Result<Sheet, string> {
     if (validScopeId(id) == false)
         throw "css: the scope id \"" + id + "\" is not [a-z0-9-]+";
     val r = scopeNodes(id, sheet.nodes);
@@ -473,7 +473,7 @@ pub fn scopeSheet(id: string, sheet: Sheet) -> @Result<Sheet, string> {
 // `parse`), for a selector that already holds a `[data-s…]` attribute (a
 // sheet is scoped once), for a `:global` that is not a whole compound and
 // for an id outside `[a-z0-9-]+` (it is written into an attribute value).
-pub fn scope(id: string, css: string) -> @Result<string, string> {
+pub fn scope(id: string, css: string) -> Result<string, string> {
     val parsed = try parse(css);
     val scoped = try scopeSheet(id, parsed);
     return render(scoped);
