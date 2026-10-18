@@ -1,3 +1,56 @@
 //// Decision 330 — `?T` is read with TypeScript's operators and has no methods; `result` goes; a type declared in a type is its associated type.
 
-pub fn main() -> void {}
+import {io.terminal} from "std";
+import {sheet.Node, sheet.Sheet, sheet.parse, sheet.scope} from "css";
+
+// A page of a site: its stylesheet, when it has one, and the hook that scopes
+// it, when the page asks for one.
+pub type Page(title: string, css: ?string, scoper: ?fn(string) -> string) {
+    // `Page.Rule`, an associated type: declared in the body of `Page`.
+    pub type Rule(selector: string, at: i32)
+
+    // The first rule of `sheet`, absent when its first node is no rule.
+    pub fn firstRule(sheet: Sheet) -> ?Page.Rule {
+        val first = sheet.nodes[0] ?? Node.Space(text: "");
+        return case first {
+            Rule(selector, at, body) -> Page.Rule(selector: selector, at: at);
+            _ -> null;
+        };
+    }
+}
+
+// The page's sheet: absent when the page has none or when it does not parse.
+fn sheetOf(page: Page) -> ?Sheet {
+    val parsed = parse(page.css ?? "");
+    return if (page.css == null || parsed.isError())
+        null
+    else
+        parsed.unwrapOr(Sheet(nodes: []));
+}
+
+pub fn main() -> void {
+    val scopeA1: fn(string) -> string = { css -> try scope("a1", css) catch css };
+    val home = Page(
+        title: "home",
+        css: "h1 { color: red; }\np { margin: 0; }",
+        scoper: scopeA1,
+    );
+    val about = Page(title: "about", css: null, scoper: null);
+
+    // `?.(args)`: the hook called when the page holds one; `??` the default.
+    terminal.print(home.scoper?.(home.css ?? "") ?? "unscoped", "\n");
+    terminal.print(about.scoper?.(about.css ?? "") ?? "unscoped", "\n");
+
+    // `?.` and `?.[i]`: `nodes[0]` already answers `?Node`, and through `?.`
+    // it stays `?Node` — absent for a page with no sheet.
+    terminal.print(sheetOf(home)?.nodes?.[0] != null, "\n");
+    terminal.print(sheetOf(about)?.nodes?.[0] == null, "\n");
+
+    // An associated type read through an optional: `?.selector` is `?string`.
+    val rule = Page.firstRule(sheetOf(home) ?? Sheet(nodes: []));
+    terminal.print(rule?.selector ?? "no rule", "\n");
+
+    // `!`: the home page is known to hold a sheet; a `null` here would abort,
+    // located, on every target.
+    terminal.print(home.css!.length(), "\n");
+}

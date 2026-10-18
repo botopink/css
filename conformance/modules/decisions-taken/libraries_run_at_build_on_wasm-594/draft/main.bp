@@ -1,3 +1,19 @@
 //// Decision 594 — Every library runs at build on the wasm comptime runtime (434), jhonstart first; a function only Erlang or Node can run is a located error there.
 
-pub fn main() -> void {}
+import {io.terminal} from "std";
+import {sheet.scope} from "css";
+
+fn scoped(css: string) -> string {
+    return try scope("a1", css) catch { e -> e };
+}
+
+pub fn main() -> void {
+    val source = "h1 { color: red; }\n.text:hover::after { content: \"!\"; }";
+    // Scoped at build, on the wasm comptime runtime, whatever `--target` is:
+    // `css` is botopink alone, so every call it makes has a wasm form.
+    val atBuild = comptime scoped("h1 { color: red; }\n.text:hover::after { content: \"!\"; }");
+    // The same call at run time, on the program's target.
+    val atRun = scoped(source);
+    terminal.print(atBuild, "\n");
+    terminal.print(atBuild == atRun, "\n");
+}

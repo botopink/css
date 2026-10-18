@@ -1,0 +1,5 @@
+// The module `theme` of this package: a card's stylesheet and the brand's
+// colour.
+pub val card: string = ".card { color: #c0ffee; }\n.card > h2 { margin: 0; }";
+
+pub val accent: string = "#c0ffee";

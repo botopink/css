@@ -1,0 +1,6 @@
+// The module `theme` of this package: the one module that declares `scoped`.
+import {sheet.scope} from "css";
+
+pub fn scoped(css: string) -> string {
+    return try scope("theme", css) catch css;
+}

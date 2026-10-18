@@ -1,3 +1,14 @@
 //// Decision 206 — `import {…} from "<name>"` resolves only to a package — std, a bundled package or a declared dependency.
 
-pub fn main() -> void {}
+import {io.terminal} from "std";
+import {sheet.scope} from "css";
+import {theme.card};
+import {theme.accent as brand};
+
+pub fn main() -> void {
+    // `scope` comes from the dependency `css`, `card` and `brand` from this
+    // package's own module `theme`, named by its path with no `from`.
+    val served = try scope("card", card) catch { e -> e };
+    terminal.print(served, "\n");
+    terminal.print(brand, "\n");
+}
