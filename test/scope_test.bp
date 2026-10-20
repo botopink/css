@@ -21,7 +21,7 @@ fn scoped(css: string) -> string {
     return outcome("a1", css);
 }
 
-fn cases() -> Array<Case> {
+fn cases() -> array<Case> {
     return [
         // the reference's two (astro-docs/11-styling.md, Estilos com Escopo)
         Case(

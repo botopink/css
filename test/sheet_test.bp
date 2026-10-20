@@ -20,7 +20,7 @@ fn empty() -> Sheet {
 // One letter per node, nested blocks in parentheses: `S` space, `C` comment,
 // `D` declaration (the last one of a block may run to the `}`, its space
 // included), `T` at-statement, `R` rule, `A` at-rule, `K` keyframe.
-fn shapeOf(nodes: Array<Node>) -> string {
+fn shapeOf(nodes: array<Node>) -> string {
     return nodes.map({ n -> shapeOfNode(n) }).join("");
 }
 
