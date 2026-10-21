@@ -26,7 +26,7 @@ pub type ScopedText(text: string, problem: string)
 pub fn validScopeId(id: string) -> bool {
     if (id == "") return false;
     var ok = true;
-    for c in id.chars() {
+    for (id.chars()) { c ->
         if ("abcdefghijklmnopqrstuvwxyz0123456789-".contains(c) == false)
             ok = false;
     }

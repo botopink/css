@@ -121,7 +121,7 @@ test "css: render(parse(css)) is css, byte for byte" {
         "a[title=\"a { b\"] { }",
     ];
     var wrong = "";
-    for css in corpus {
+    for (corpus) { css ->
         val got = roundTrip(css);
         if (got != css) wrong = wrong + "\n" + css + "\n  got " + got;
     }

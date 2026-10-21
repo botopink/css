@@ -193,7 +193,7 @@ fn cases() -> array<Case> {
 test "css: forty selector cases, each served as its literal" {
     val all = cases();
     var wrong = "";
-    for c in all {
+    for (all) { c ->
         val got = scoped(c.written);
         if (got != c.served)
             wrong = wrong
