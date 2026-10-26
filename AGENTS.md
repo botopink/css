@@ -25,7 +25,7 @@ every target reads and scopes a sheet to the same bytes.
 ```text
 css/
 ├── AGENTS.md
-├── botopink.json      ← "name": "css", "target": "erlang", "targets": ["erlang", "commonJS"], `files` = every src module
+├── botopink.json      ← "name": "css", "target": "erlang", no "targets" — all four, wasm included (decision 993 (4)), `files` = every src module
 ├── src/
 │   ├── root.bp        ← `pub mod` per module, a module before the siblings that import it
 │   ├── chars.bp       ← charAt, textOf, byteOffset, problemAt, isNameChar, isSpace, opensComment, skipComment, skipEscape, skipString

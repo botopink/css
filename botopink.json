@@ -6,7 +6,6 @@
   "src": "src/",
   "entry": "root.bp",
   "target": "erlang",
-  "targets": ["erlang", "beam", "commonJS"],
   "files": [
     "root.bp",
     "chars.bp",
